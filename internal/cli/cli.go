@@ -474,8 +474,75 @@ func runTask(args []string) error {
 		return runTaskRepeat(rest)
 	case "next":
 		return runTaskNext()
+	case "pri", "priority":
+		return runTaskPri(rest)
+	case "due":
+		return runTaskDue(rest)
 	}
 	return fmt.Errorf("unknown task subcommand %q", cmd)
+}
+
+// runTaskPri sets the priority of one task in a single command.
+// Usage: mindforge task pri <id> <1..5>
+func runTaskPri(args []string) error {
+	if len(args) != 2 {
+		return errors.New("usage: mindforge task pri <id> <1..5>")
+	}
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid id %q", args[0])
+	}
+	pri, err := strconv.Atoi(args[1])
+	if err != nil || pri < 1 || pri > 5 {
+		return fmt.Errorf("priority must be 1..5, got %q", args[1])
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	if err := tasks.Update(st, id, nil, nil, &pri, nil, false, nil, false); err != nil {
+		return err
+	}
+	fmt.Println(ui.Green("priority updated"), ui.Dim(fmt.Sprintf("#%d → P%d", id, pri)))
+	return nil
+}
+
+// runTaskDue updates the due date of a task using the same friendly
+// date parser as task add.  Pass "none" or "clear" to wipe the date.
+func runTaskDue(args []string) error {
+	if len(args) < 2 {
+		return errors.New("usage: mindforge task due <id> <date|today|tomorrow|none>")
+	}
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid id %q", args[0])
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	when := strings.Join(args[1:], " ")
+	var due *time.Time
+	clear := false
+	switch strings.ToLower(when) {
+	case "none", "clear", "off", "remove":
+		clear = true
+	default:
+		t, err := parseDateMaybe(when)
+		if err != nil {
+			return err
+		}
+		due = t
+	}
+	if err := tasks.Update(st, id, nil, nil, nil, due, clear, nil, false); err != nil {
+		return err
+	}
+	if clear {
+		fmt.Println(ui.Green("due date cleared"), ui.Dim(fmt.Sprintf("#%d", id)))
+	} else {
+		fmt.Println(ui.Green("due updated"), ui.Dim(fmt.Sprintf("#%d → %s", id, due.Format("2006-01-02"))))
+	}
+	return nil
 }
 
 // runTaskNext prints just the one highest-priority open task — useful as
