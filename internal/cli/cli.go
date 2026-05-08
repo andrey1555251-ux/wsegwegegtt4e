@@ -68,7 +68,7 @@ func Run(args []string) error {
 	case "quote":
 		return runQuote(os.Stdout)
 	case "doctor":
-		return runDoctor(os.Stdout)
+		return runDoctor(os.Stdout, rest)
 	case "today":
 		return runToday(os.Stdout)
 	case "search", "find":
@@ -1243,7 +1243,12 @@ func runConfig(args []string) error {
 	return nil
 }
 
-func runDoctor(w io.Writer) error {
+func runDoctor(w io.Writer, args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fix := fs.Bool("fix", false, "auto-repair common issues")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	st, err := open()
 	if err != nil {
 		fmt.Fprintln(w, ui.Red("FAIL"), err)
@@ -1261,9 +1266,144 @@ func runDoctor(w io.Writer) error {
 		fmt.Fprintln(w, ui.Green("OK"), "schema version", d.SchemaVersion)
 	}
 	fmt.Fprintln(w, ui.Green("OK"),
-		fmt.Sprintf("%d notes, %d tasks, %d journal entries, %d pomodoros",
-			len(d.Notes), len(d.Tasks), len(d.Journal), len(d.Pomodoros)))
+		fmt.Sprintf("%d notes, %d tasks, %d journal entries, %d pomodoros, %d habits",
+			len(d.Notes), len(d.Tasks), len(d.Journal), len(d.Pomodoros), len(d.Habits)))
+
+	// Audit step.
+	issues := auditData(d)
+	if len(issues) == 0 {
+		fmt.Fprintln(w, ui.Green("OK"), "no integrity issues found")
+		return nil
+	}
+	for _, i := range issues {
+		fmt.Fprintln(w, ui.Yellow("WARN"), i)
+	}
+	if !*fix {
+		fmt.Fprintln(w, ui.Dim("→ run `mindforge doctor --fix` to auto-repair these"))
+		return nil
+	}
+	// Apply fixes inside a single Use() call so they persist.
+	if err := st.Use(func(d *store.Data) error {
+		repairData(d)
+		return nil
+	}); err != nil {
+		fmt.Fprintln(w, ui.Red("FAIL"), "could not write repairs:", err)
+		return err
+	}
+	fmt.Fprintln(w, ui.Green("FIXED"), "applied repairs and saved data file")
 	return nil
+}
+
+// auditData walks the data and collects human-readable problems.
+func auditData(d *store.Data) []string {
+	var out []string
+	noteIDs := map[int]int{}
+	for _, n := range d.Notes {
+		noteIDs[n.ID]++
+	}
+	for id, c := range noteIDs {
+		if c > 1 {
+			out = append(out, fmt.Sprintf("note id #%d duplicated %d times", id, c))
+		}
+		if id >= d.Counters.NextNoteID {
+			out = append(out, fmt.Sprintf("counters.next_note_id (%d) is not ahead of note #%d", d.Counters.NextNoteID, id))
+		}
+	}
+	taskIDs := map[int]int{}
+	for _, t := range d.Tasks {
+		taskIDs[t.ID]++
+	}
+	for id, c := range taskIDs {
+		if c > 1 {
+			out = append(out, fmt.Sprintf("task id #%d duplicated %d times", id, c))
+		}
+		if id >= d.Counters.NextTaskID {
+			out = append(out, fmt.Sprintf("counters.next_task_id (%d) is not ahead of task #%d", d.Counters.NextTaskID, id))
+		}
+	}
+	habitIDs := map[int]int{}
+	for _, h := range d.Habits {
+		habitIDs[h.ID]++
+	}
+	for id, c := range habitIDs {
+		if c > 1 {
+			out = append(out, fmt.Sprintf("habit id #%d duplicated %d times", id, c))
+		}
+		if id >= d.Counters.NextHabitID {
+			out = append(out, fmt.Sprintf("counters.next_habit_id (%d) is not ahead of habit #%d", d.Counters.NextHabitID, id))
+		}
+	}
+	if d.Counters.NextNoteID == 0 {
+		out = append(out, "counters.next_note_id is 0")
+	}
+	if d.Counters.NextTaskID == 0 {
+		out = append(out, "counters.next_task_id is 0")
+	}
+	if d.Counters.NextHabitID == 0 {
+		out = append(out, "counters.next_habit_id is 0")
+	}
+	for _, t := range d.Tasks {
+		if t.Done && t.DoneAt == nil {
+			out = append(out, fmt.Sprintf("task #%d is done but missing done_at timestamp", t.ID))
+		}
+		if !t.Done && t.DoneAt != nil {
+			out = append(out, fmt.Sprintf("task #%d not done but has done_at set", t.ID))
+		}
+	}
+	for _, j := range d.Journal {
+		if _, err := time.Parse("2006-01-02", j.Date); err != nil {
+			out = append(out, fmt.Sprintf("journal entry has malformed date %q", j.Date))
+		}
+	}
+	return out
+}
+
+// repairData applies the cheap, obvious fixes audit reported.
+func repairData(d *store.Data) {
+	// Re-derive next-id counters.
+	if d.Counters.NextNoteID < 1 {
+		d.Counters.NextNoteID = 1
+	}
+	for _, n := range d.Notes {
+		if n.ID >= d.Counters.NextNoteID {
+			d.Counters.NextNoteID = n.ID + 1
+		}
+	}
+	if d.Counters.NextTaskID < 1 {
+		d.Counters.NextTaskID = 1
+	}
+	for _, t := range d.Tasks {
+		if t.ID >= d.Counters.NextTaskID {
+			d.Counters.NextTaskID = t.ID + 1
+		}
+	}
+	if d.Counters.NextHabitID < 1 {
+		d.Counters.NextHabitID = 1
+	}
+	for _, h := range d.Habits {
+		if h.ID >= d.Counters.NextHabitID {
+			d.Counters.NextHabitID = h.ID + 1
+		}
+	}
+	// Synchronise done/done_at flags.
+	now := time.Now()
+	for i := range d.Tasks {
+		if d.Tasks[i].Done && d.Tasks[i].DoneAt == nil {
+			t := now
+			d.Tasks[i].DoneAt = &t
+		}
+		if !d.Tasks[i].Done && d.Tasks[i].DoneAt != nil {
+			d.Tasks[i].DoneAt = nil
+		}
+	}
+	// Drop journal entries with bad dates.
+	good := d.Journal[:0]
+	for _, j := range d.Journal {
+		if _, err := time.Parse("2006-01-02", j.Date); err == nil {
+			good = append(good, j)
+		}
+	}
+	d.Journal = good
 }
 
 func runQuote(w io.Writer) error {
