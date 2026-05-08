@@ -159,6 +159,7 @@ func runHelp(w io.Writer) error {
 			{"journal mood", "record today's mood 1..5 (--mood 4)"},
 			{"journal show", "show today's entry"},
 			{"journal log", "show recent entries (--days 14)"},
+			{"journal trend", "mood histogram over a window (--days 30)"},
 		}},
 		{"Pomodoro", [][2]string{
 			{"pomodoro", "start a session (--label .. --rounds 4 --focus 25)"},
@@ -796,8 +797,75 @@ func runJournal(args []string) error {
 		return runJournalShow(rest)
 	case "log":
 		return runJournalLog(rest)
+	case "trend", "mood-trend":
+		return runJournalTrend(rest)
 	}
 	return fmt.Errorf("unknown journal subcommand %q", cmd)
+}
+
+// runJournalTrend prints a mood histogram for the last N days.
+func runJournalTrend(args []string) error {
+	fs := flag.NewFlagSet("journal trend", flag.ContinueOnError)
+	days := fs.Int("days", 30, "how many days back")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	all := journal.All(st)
+	cutoff := time.Now().AddDate(0, 0, -*days).Format("2006-01-02")
+	hist := [6]int{} // index 0 unused; 1..5 are mood levels
+	total := 0
+	for _, e := range all {
+		if e.Date < cutoff {
+			continue
+		}
+		if e.Mood >= 1 && e.Mood <= 5 {
+			hist[e.Mood]++
+			total++
+		}
+	}
+	ui.PrintHeader(os.Stdout, fmt.Sprintf("Mood — last %d days", *days))
+	if total == 0 {
+		fmt.Println(ui.Dim("(no mood entries in this window)"))
+		return nil
+	}
+	max := 0
+	for i := 1; i <= 5; i++ {
+		if hist[i] > max {
+			max = hist[i]
+		}
+	}
+	for i := 5; i >= 1; i-- {
+		bar := ""
+		if max > 0 {
+			width := hist[i] * 20 / max
+			for j := 0; j < width; j++ {
+				bar += "█"
+			}
+		}
+		fmt.Printf("  %s %s %s %s\n",
+			moodGlyph(i),
+			ui.Dim(fmt.Sprintf("(%d/5)", i)),
+			ui.Pad(bar, 22),
+			ui.Bold(itoa(hist[i])),
+		)
+	}
+	avg := 0.0
+	for i := 1; i <= 5; i++ {
+		avg += float64(i) * float64(hist[i])
+	}
+	avg /= float64(total)
+	fmt.Println()
+	fmt.Printf("  %s %s %s %s\n",
+		ui.Dim("avg:"),
+		ui.Bold(fmt.Sprintf("%.2f", avg)),
+		ui.Dim("· entries:"),
+		ui.Bold(itoa(total)),
+	)
+	return nil
 }
 
 func runJournalWrite(args []string) error {
