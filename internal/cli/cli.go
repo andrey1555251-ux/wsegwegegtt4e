@@ -64,6 +64,8 @@ func Run(args []string) error {
 		return runBackup(rest)
 	case "restore":
 		return runRestore(rest)
+	case "undo":
+		return runUndo(rest)
 	case "export":
 		return runExport(rest)
 	case "config":
@@ -203,6 +205,9 @@ func runHelp(w io.Writer) error {
 			{"where", "print where your data lives"},
 			{"backup", "make a timestamped backup"},
 			{"restore <file>", "load a backup, saving current state first"},
+			{"undo", "restore from the most recent backup"},
+			{"tags rename <from> <to>", "rename a tag everywhere"},
+			{"tags delete <tag>", "remove a tag everywhere"},
 			{"export", "dump everything (--format json|md|csv)"},
 			{"import", "import text/csv/json into notes or tasks"},
 			{"config", "view or change settings (--get|--set k=v)"},
@@ -1388,6 +1393,39 @@ func runBackup(args []string) error {
 	}
 	fmt.Println(ui.Green("backup:"), dst)
 	return nil
+}
+
+// runUndo restores the most recent .bak file produced by either
+// `mindforge backup` or `mindforge restore`.  It's the "I just
+// deleted/edited the wrong thing, give it back" escape hatch.
+func runUndo(args []string) error {
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(st.Path())
+	prefix := filepath.Base(st.Path()) + "."
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	var best string
+	var bestStamp string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".bak") {
+			continue
+		}
+		stamp := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".bak")
+		if stamp > bestStamp {
+			bestStamp = stamp
+			best = name
+		}
+	}
+	if best == "" {
+		return errors.New("no backups found — try `mindforge backup` first")
+	}
+	return runRestore([]string{filepath.Join(dir, best)})
 }
 
 // runRestore replaces the live data file with the contents of a
