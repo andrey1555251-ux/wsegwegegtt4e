@@ -6,16 +6,18 @@ This was Devin's "first program if it were a person" — built end to end in
 one session, only with the Go standard library, so the resulting binary
 is a self-contained Windows `.exe` with no DLLs to chase.
 
-It keeps four things in a single JSON file:
+It keeps these things in a single JSON file:
 
 - **Notes** — quick markdown snippets with tags and pinning.
 - **Tasks** — a TODO list with priorities, due dates and tags.
 - **Journal** — append-only daily reflections with a 1‑5 mood.
 - **Pomodoros** — a focus timer that records every completed round.
+- **Habits** — daily check-ins with streaks and a heatmap.
+- **Vault** — AES-256-GCM encrypted notes behind a passphrase.
 
 …and turns those into a daily briefing, a tiny ASCII calendar, a
 heatmap of focus time, full-text search, and Markdown / CSV / JSON
-exports.
+import & export.
 
 ## Quick start
 
@@ -26,10 +28,14 @@ mindforge add @ Idea: rewrite intro  # quick capture (creates a note)
 mindforge task add "ship release" --priority 1 --due tomorrow --tag work
 mindforge note add -t "first note" -b "this is the body" --tag ideas
 mindforge journal write -b "today I shipped MindForge"
+mindforge habit add "drink water"    # track a daily intention
+mindforge habit check 1              # tick today's habit
 mindforge pomodoro --label "deep work" --rounds 4
 mindforge today                      # daily briefing
+mindforge motd                       # one-liner banner for shell rc
 mindforge stats                      # streak, heatmap, totals
 mindforge search "release"           # search across notes, tasks, journal
+mindforge vault encrypt 1            # AES-GCM encrypt a sensitive note
 mindforge export --format md --out backup.md
 ```
 

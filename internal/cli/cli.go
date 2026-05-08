@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andrey1555251-ux/mindforge/internal/habits"
 	"github.com/andrey1555251-ux/mindforge/internal/journal"
 	"github.com/andrey1555251-ux/mindforge/internal/notes"
 	"github.com/andrey1555251-ux/mindforge/internal/pomodoro"
@@ -143,11 +144,14 @@ func runHelp(w io.Writer) error {
 		}},
 		{"Tasks", [][2]string{
 			{"task add", "add a task (\"title\" --priority 1 --due 2026-12-31 --tag work)"},
-			{"task list", "list open tasks (--all --done --overdue --soon 24)"},
-			{"task done <id>", "mark task done"},
+			{"task list", "list open tasks (--all --done --archived --overdue --soon 24)"},
+			{"task done <id>", "mark done; recurring tasks regenerate"},
 			{"task reopen <id>", "reopen a previously completed task"},
 			{"task edit <id>", "edit a task"},
-			{"task delete <id>", "delete a task"},
+			{"task archive <id>", "soft-delete (kept in --archived view)"},
+			{"task tidy", "archive every completed task at once"},
+			{"task repeat <id> daily", "set recurrence (daily|weekly|monthly|none)"},
+			{"task delete <id>", "delete a task permanently"},
 		}},
 		{"Journal", [][2]string{
 			{"journal write", "append text to today's entry (-b ...)"},
@@ -158,17 +162,37 @@ func runHelp(w io.Writer) error {
 		{"Pomodoro", [][2]string{
 			{"pomodoro", "start a session (--label .. --rounds 4 --focus 25)"},
 		}},
+		{"Habits", [][2]string{
+			{"habit add", "create a new daily habit (\"drink water\")"},
+			{"habit list", "show all habits with current streaks"},
+			{"habit check <id>", "tick today (use --date YYYY-MM-DD or 'yesterday')"},
+			{"habit uncheck <id>", "remove a check-in"},
+			{"habit history <id>", "ASCII heatmap (--weeks 8)"},
+			{"habit rename <id>", "rename a habit"},
+			{"habit delete <id>", "delete a habit and its history"},
+		}},
+		{"Vault", [][2]string{
+			{"vault encrypt <id>", "AES-GCM encrypt a note's body"},
+			{"vault decrypt <id>", "decrypt in place (or --keep to just print)"},
+			{"vault list", "list locked notes"},
+		}},
 		{"Insight", [][2]string{
 			{"today", "a curated daily briefing"},
+			{"motd", "tiny one-liner banner for shell rc"},
 			{"stats", "totals, streaks and a tiny heatmap"},
+			{"calendar", "ASCII month view"},
+			{"search <q>", "unified search across notes/tasks/journal"},
+			{"add", "quick capture (\"text\", '@ note', '! priority task')"},
 			{"tags", "show every tag with usage counts"},
 			{"quote", "a random encouragement"},
 		}},
 		{"Maintenance", [][2]string{
 			{"where", "print where your data lives"},
 			{"backup", "make a timestamped backup"},
-			{"export", "dump everything (--format json|md)"},
+			{"export", "dump everything (--format json|md|csv)"},
+			{"import", "import text/csv/json into notes or tasks"},
 			{"config", "view or change settings (--get|--set k=v)"},
+			{"edit-data", "open the data file in $EDITOR"},
 			{"doctor", "self-check the data file"},
 			{"version", "show version"},
 		}},
@@ -436,8 +460,91 @@ func runTask(args []string) error {
 		return runTaskEdit(rest)
 	case "delete", "rm", "del":
 		return runTaskDelete(rest)
+	case "archive":
+		return runTaskArchive(rest, true)
+	case "unarchive", "restore":
+		return runTaskArchive(rest, false)
+	case "tidy":
+		return runTaskTidy()
+	case "repeat":
+		return runTaskRepeat(rest)
 	}
 	return fmt.Errorf("unknown task subcommand %q", cmd)
+}
+
+func runTaskArchive(args []string, archive bool) error {
+	if len(args) == 0 {
+		if archive {
+			return errors.New("usage: mindforge task archive <id> [<id> ...]")
+		}
+		return errors.New("usage: mindforge task unarchive <id> [<id> ...]")
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	for _, raw := range args {
+		id, err := strconv.Atoi(raw)
+		if err != nil {
+			return fmt.Errorf("invalid id %q", raw)
+		}
+		if archive {
+			if err := tasks.Archive(st, id); err != nil {
+				return err
+			}
+			fmt.Println(ui.Dim("archived"), ui.Dim("#"+itoa(id)))
+		} else {
+			if err := tasks.Unarchive(st, id); err != nil {
+				return err
+			}
+			fmt.Println(ui.Green("restored"), ui.Dim("#"+itoa(id)))
+		}
+	}
+	return nil
+}
+
+func runTaskTidy() error {
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	n, err := tasks.ArchiveAllDone(st)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		fmt.Println(ui.Dim("nothing to tidy."))
+		return nil
+	}
+	fmt.Printf("%s %d completed task(s) archived\n", ui.Green("✓"), n)
+	return nil
+}
+
+func runTaskRepeat(args []string) error {
+	if len(args) < 2 {
+		return errors.New("usage: mindforge task repeat <id> <daily|weekly|monthly|none>")
+	}
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid id %q", args[0])
+	}
+	mode := args[1]
+	if mode == "none" || mode == "off" {
+		mode = ""
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	if err := tasks.SetRepeat(st, id, mode); err != nil {
+		return err
+	}
+	if mode == "" {
+		fmt.Println(ui.Dim("recurrence cleared"))
+	} else {
+		fmt.Println(ui.Green("repeat:"), mode)
+	}
+	return nil
 }
 
 func runTaskAdd(args []string) error {
@@ -474,6 +581,8 @@ func runTaskList(args []string) error {
 	fs := flag.NewFlagSet("task list", flag.ContinueOnError)
 	all := fs.Bool("all", false, "include completed")
 	done := fs.Bool("done", false, "only completed")
+	archived := fs.Bool("archived", false, "only archived")
+	withArchived := fs.Bool("with-archived", false, "include archived too")
 	tag := fs.String("tag", "", "filter by tag")
 	q := fs.String("query", "", "substring search")
 	overdue := fs.Bool("overdue", false, "overdue only")
@@ -486,12 +595,14 @@ func runTaskList(args []string) error {
 		return err
 	}
 	out := tasks.List(st, tasks.FilterOpts{
-		IncludeDone: *all,
-		OnlyDone:    *done,
-		Tag:         *tag,
-		Query:       *q,
-		OverdueOnly: *overdue,
-		DueSoonHrs:  *soon,
+		IncludeDone:     *all,
+		OnlyDone:        *done,
+		IncludeArchived: *withArchived || *archived,
+		OnlyArchived:    *archived,
+		Tag:             *tag,
+		Query:           *q,
+		OverdueOnly:     *overdue,
+		DueSoonHrs:      *soon,
 	})
 	if len(out) == 0 {
 		fmt.Println(ui.Dim("(no tasks)"))
@@ -544,10 +655,14 @@ func runTaskMark(args []string, done bool) error {
 			return fmt.Errorf("invalid id %q", raw)
 		}
 		if done {
-			if err := tasks.Done(st, id); err != nil {
+			spawned, err := tasks.Done(st, id)
+			if err != nil {
 				return err
 			}
 			fmt.Println(ui.Green("done"), ui.Dim("#"+itoa(id)))
+			if spawned != 0 {
+				fmt.Println(ui.Dim("  ↻ recurrence spawned task #" + itoa(spawned)))
+			}
 		} else {
 			if err := tasks.Reopen(st, id); err != nil {
 				return err
@@ -922,6 +1037,23 @@ func runToday(w io.Writer) error {
 		fmt.Fprintln(w, ui.Dim("Journal: empty for today.  Try `mindforge journal write -b \"...\"`."))
 	}
 
+	hs := habits.All(st)
+	if len(hs) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, ui.Bold("Habits"))
+		for _, h := range hs {
+			marker := ui.Dim("·")
+			if habits.CheckedOn(h, now) {
+				marker = ui.Green("v")
+			}
+			fmt.Fprintf(w, "  %s %s %s · streak %s\n",
+				marker,
+				ui.Dim("#"+itoa(h.ID)),
+				truncate(h.Name, 40),
+				streakBadge(habits.Streak(h, now)))
+		}
+	}
+
 	s := stats.Compute(d, now)
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "%s focus today · %s pomodoros today · %s day streak\n",
@@ -1176,7 +1308,7 @@ func truncate(s string, n int) string {
 }
 
 func parseDateMaybe(s string) (*time.Time, error) {
-	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {
 		return nil, nil
 	}
@@ -1185,8 +1317,17 @@ func parseDateMaybe(s string) (*time.Time, error) {
 	case "today":
 		t := startOfDay(now).Add(20 * time.Hour)
 		return &t, nil
-	case "tomorrow":
+	case "tomorrow", "tmr":
 		t := startOfDay(now).AddDate(0, 0, 1).Add(20 * time.Hour)
+		return &t, nil
+	case "yesterday":
+		t := startOfDay(now).AddDate(0, 0, -1).Add(20 * time.Hour)
+		return &t, nil
+	}
+	// Weekday names: "monday", "fri", "next thursday".  We resolve to
+	// the nearest future occurrence, with "next X" jumping a week
+	// further than "this X".
+	if t, ok := parseWeekday(now, s); ok {
 		return &t, nil
 	}
 	if strings.HasPrefix(s, "+") && strings.HasSuffix(s, "d") {
@@ -1196,12 +1337,20 @@ func parseDateMaybe(s string) (*time.Time, error) {
 			return &t, nil
 		}
 	}
+	if strings.HasPrefix(s, "in ") {
+		// "in 3d", "in 2 weeks", "in 1 hour"
+		if t, ok := parseRelative(now, strings.TrimPrefix(s, "in ")); ok {
+			return &t, nil
+		}
+	}
 	formats := []string{
 		"2006-01-02 15:04",
-		"2006-01-02T15:04",
+		"2006-01-02t15:04",
 		"2006-01-02",
 		"01/02 15:04",
 		"01/02",
+		"02 jan 2006",
+		"02 jan",
 	}
 	for _, f := range formats {
 		if t, err := time.ParseInLocation(f, s, time.Local); err == nil {
@@ -1209,6 +1358,89 @@ func parseDateMaybe(s string) (*time.Time, error) {
 		}
 	}
 	return nil, fmt.Errorf("cannot parse date %q", s)
+}
+
+// parseWeekday parses things like "monday", "mon", "next friday".
+// Lower-case input is assumed.
+func parseWeekday(now time.Time, s string) (time.Time, bool) {
+	mod := 0
+	switch {
+	case strings.HasPrefix(s, "next "):
+		s = strings.TrimPrefix(s, "next ")
+		mod = 7
+	case strings.HasPrefix(s, "this "):
+		s = strings.TrimPrefix(s, "this ")
+	}
+	wd, ok := weekdayLookup[s]
+	if !ok {
+		return time.Time{}, false
+	}
+	cur := int(now.Weekday())
+	want := int(wd)
+	delta := want - cur
+	if delta <= 0 {
+		delta += 7
+	}
+	delta += mod
+	t := startOfDay(now).AddDate(0, 0, delta).Add(20 * time.Hour)
+	return t, true
+}
+
+// parseRelative parses simple "<n> <unit>" expressions.
+func parseRelative(now time.Time, s string) (time.Time, bool) {
+	parts := strings.Fields(s)
+	if len(parts) != 2 {
+		// support "3d" as a single token
+		if len(parts) == 1 && len(parts[0]) > 1 {
+			return parseRelativeShort(now, parts[0])
+		}
+		return time.Time{}, false
+	}
+	n, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return time.Time{}, false
+	}
+	switch strings.TrimSuffix(parts[1], "s") {
+	case "day", "d":
+		return startOfDay(now).AddDate(0, 0, n).Add(20 * time.Hour), true
+	case "week", "w":
+		return startOfDay(now).AddDate(0, 0, n*7).Add(20 * time.Hour), true
+	case "month", "m":
+		return startOfDay(now).AddDate(0, n, 0).Add(20 * time.Hour), true
+	case "hour", "h":
+		return now.Add(time.Duration(n) * time.Hour), true
+	}
+	return time.Time{}, false
+}
+
+func parseRelativeShort(now time.Time, s string) (time.Time, bool) {
+	if len(s) < 2 {
+		return time.Time{}, false
+	}
+	unit := s[len(s)-1]
+	n, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	switch unit {
+	case 'd':
+		return startOfDay(now).AddDate(0, 0, n).Add(20 * time.Hour), true
+	case 'w':
+		return startOfDay(now).AddDate(0, 0, n*7).Add(20 * time.Hour), true
+	case 'h':
+		return now.Add(time.Duration(n) * time.Hour), true
+	}
+	return time.Time{}, false
+}
+
+var weekdayLookup = map[string]time.Weekday{
+	"sun": time.Sunday, "sunday": time.Sunday,
+	"mon": time.Monday, "monday": time.Monday,
+	"tue": time.Tuesday, "tues": time.Tuesday, "tuesday": time.Tuesday,
+	"wed": time.Wednesday, "weds": time.Wednesday, "wednesday": time.Wednesday,
+	"thu": time.Thursday, "thur": time.Thursday, "thurs": time.Thursday, "thursday": time.Thursday,
+	"fri": time.Friday, "friday": time.Friday,
+	"sat": time.Saturday, "saturday": time.Saturday,
 }
 
 func startOfDay(t time.Time) time.Time {

@@ -29,7 +29,7 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Fatalf("zero id")
 	}
 
-	if err := Done(s, id); err != nil {
+	if _, err := Done(s, id); err != nil {
 		t.Fatalf("done: %v", err)
 	}
 	got, _ := Get(s, id)
@@ -101,7 +101,7 @@ func TestTaskListFilters(t *testing.T) {
 		t.Fatalf("query filter: %+v", out)
 	}
 
-	if err := Done(s, id1); err != nil {
+	if _, err := Done(s, id1); err != nil {
 		t.Fatalf("done: %v", err)
 	}
 	out = List(s, FilterOpts{})

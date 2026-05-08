@@ -31,15 +31,20 @@ type Note struct {
 
 // Task represents a TODO entry.
 type Task struct {
-	ID        int        `json:"id"`
-	Title     string     `json:"title"`
-	Notes     string     `json:"notes,omitempty"`
-	Priority  int        `json:"priority"` // 1 (highest) .. 5 (lowest)
-	Due       *time.Time `json:"due,omitempty"`
-	Done      bool       `json:"done"`
-	DoneAt    *time.Time `json:"done_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	Tags      []string   `json:"tags,omitempty"`
+	ID         int        `json:"id"`
+	Title      string     `json:"title"`
+	Notes      string     `json:"notes,omitempty"`
+	Priority   int        `json:"priority"` // 1 (highest) .. 5 (lowest)
+	Due        *time.Time `json:"due,omitempty"`
+	Done       bool       `json:"done"`
+	DoneAt     *time.Time `json:"done_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	Tags       []string   `json:"tags,omitempty"`
+	Archived   bool       `json:"archived,omitempty"`
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	// Repeat is "", "daily", "weekly", "monthly".  When a recurring
+	// task is completed we spawn a fresh copy with a bumped due date.
+	Repeat string `json:"repeat,omitempty"`
 }
 
 // JournalEntry is one dated reflection.  We allow at most one entry per

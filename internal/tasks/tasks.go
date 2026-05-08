@@ -40,9 +40,13 @@ func Add(s *store.Store, title string, priority int, due *time.Time, tags []stri
 	return id, err
 }
 
-// Done flips done=true on a task and stores DoneAt.
-func Done(s *store.Store, id int) error {
-	return s.Use(func(d *store.Data) error {
+// Done flips done=true on a task and stores DoneAt.  If the task has
+// a Repeat field set, a fresh copy is spawned with a bumped due date
+// so daily/weekly/monthly recurring tasks regenerate themselves.
+// The returned int is the id of the spawned task or 0 if none.
+func Done(s *store.Store, id int) (int, error) {
+	var spawned int
+	err := s.Use(func(d *store.Data) error {
 		for i := range d.Tasks {
 			if d.Tasks[i].ID != id {
 				continue
@@ -50,6 +54,125 @@ func Done(s *store.Store, id int) error {
 			now := time.Now()
 			d.Tasks[i].Done = true
 			d.Tasks[i].DoneAt = &now
+			if d.Tasks[i].Repeat != "" {
+				next := nextRepeat(d.Tasks[i], now)
+				next.ID = d.Counters.NextTaskID
+				d.Counters.NextTaskID++
+				d.Tasks = append(d.Tasks, next)
+				spawned = next.ID
+			}
+			return nil
+		}
+		return fmt.Errorf("task %d not found", id)
+	})
+	return spawned, err
+}
+
+// nextRepeat builds the follow-up task for a recurring entry.
+func nextRepeat(t store.Task, now time.Time) store.Task {
+	clone := store.Task{
+		Title:     t.Title,
+		Notes:     t.Notes,
+		Priority:  t.Priority,
+		Tags:      append([]string(nil), t.Tags...),
+		Repeat:    t.Repeat,
+		CreatedAt: now,
+	}
+	base := now
+	if t.Due != nil {
+		base = *t.Due
+	}
+	var due time.Time
+	switch strings.ToLower(t.Repeat) {
+	case "daily":
+		due = base.AddDate(0, 0, 1)
+	case "weekly":
+		due = base.AddDate(0, 0, 7)
+	case "monthly":
+		due = base.AddDate(0, 1, 0)
+	default:
+		due = base.AddDate(0, 0, 1)
+	}
+	// If the new due date is still in the past (e.g. user finished a
+	// long-overdue task), keep bumping until it's strictly in the future.
+	for !due.After(now) {
+		switch strings.ToLower(t.Repeat) {
+		case "weekly":
+			due = due.AddDate(0, 0, 7)
+		case "monthly":
+			due = due.AddDate(0, 1, 0)
+		default:
+			due = due.AddDate(0, 0, 1)
+		}
+	}
+	clone.Due = &due
+	return clone
+}
+
+// Archive marks a task as archived (hidden from normal lists but kept
+// for the historical record).  Use Reopen to bring it back.
+func Archive(s *store.Store, id int) error {
+	return s.Use(func(d *store.Data) error {
+		for i := range d.Tasks {
+			if d.Tasks[i].ID != id {
+				continue
+			}
+			now := time.Now()
+			d.Tasks[i].Archived = true
+			d.Tasks[i].ArchivedAt = &now
+			return nil
+		}
+		return fmt.Errorf("task %d not found", id)
+	})
+}
+
+// Unarchive flips Archived back off.
+func Unarchive(s *store.Store, id int) error {
+	return s.Use(func(d *store.Data) error {
+		for i := range d.Tasks {
+			if d.Tasks[i].ID != id {
+				continue
+			}
+			d.Tasks[i].Archived = false
+			d.Tasks[i].ArchivedAt = nil
+			return nil
+		}
+		return fmt.Errorf("task %d not found", id)
+	})
+}
+
+// ArchiveAllDone archives every task that is currently marked Done.
+// Returns the count of tasks affected.
+func ArchiveAllDone(s *store.Store) (int, error) {
+	var n int
+	err := s.Use(func(d *store.Data) error {
+		now := time.Now()
+		for i := range d.Tasks {
+			if d.Tasks[i].Done && !d.Tasks[i].Archived {
+				d.Tasks[i].Archived = true
+				d.Tasks[i].ArchivedAt = &now
+				n++
+			}
+		}
+		return nil
+	})
+	return n, err
+}
+
+// SetRepeat updates the recurrence string ("", "daily", "weekly", "monthly").
+func SetRepeat(s *store.Store, id int, repeat string) error {
+	repeat = strings.ToLower(strings.TrimSpace(repeat))
+	switch repeat {
+	case "", "daily", "weekly", "monthly":
+	default:
+		return fmt.Errorf("repeat must be one of daily, weekly, monthly (or empty)")
+	}
+	return s.Use(func(d *store.Data) error {
+		for i := range d.Tasks {
+			if d.Tasks[i].ID != id {
+				continue
+			}
+			d.Tasks[i].Repeat = repeat
 			return nil
 		}
 		return fmt.Errorf("task %d not found", id)
@@ -142,12 +265,14 @@ func Get(s *store.Store, id int) (store.Task, bool) {
 
 // FilterOpts controls List below.
 type FilterOpts struct {
-	IncludeDone bool
-	OnlyDone    bool
-	Tag         string
-	Query       string
-	OverdueOnly bool
-	DueSoonHrs  int // 0 = ignore
+	IncludeDone     bool
+	OnlyDone        bool
+	IncludeArchived bool
+	OnlyArchived    bool
+	Tag             string
+	Query           string
+	OverdueOnly     bool
+	DueSoonHrs      int // 0 = ignore
 }
 
 // List returns tasks matching opts, sorted by smart key.
@@ -163,6 +288,12 @@ func List(s *store.Store, opts FilterOpts) []store.Task {
 				continue
 			}
 			if opts.OnlyDone && !t.Done {
+				continue
+			}
+			if opts.OnlyArchived && !t.Archived {
+				continue
+			}
+			if !opts.IncludeArchived && !opts.OnlyArchived && t.Archived {
 				continue
 			}
 			if tag != "" && !containsString(t.Tags, tag) {
