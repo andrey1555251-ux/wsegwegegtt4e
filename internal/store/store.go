@@ -16,7 +16,7 @@ import (
 
 // SchemaVersion bumps when the on-disk layout changes in a backwards
 // incompatible way.  See migrate() for the upgrade path.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Note is a free-form text snippet with tags.
 type Note struct {
@@ -65,6 +65,17 @@ type PomodoroLog struct {
 	Interrupted bool      `json:"interrupted,omitempty"`
 }
 
+// Habit is a daily intention the user wants to keep up with.  We
+// store completed days as plain YYYY-MM-DD strings to keep the JSON
+// trivially diff-able and easy to import/export.
+type Habit struct {
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	Target    int       `json:"target,omitempty"` // optional target count per day
+	Checks    []string  `json:"checks,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Data is the root JSON document persisted to disk.
 type Data struct {
 	SchemaVersion int            `json:"schema_version"`
@@ -73,6 +84,7 @@ type Data struct {
 	Tasks         []Task         `json:"tasks"`
 	Journal       []JournalEntry `json:"journal"`
 	Pomodoros     []PomodoroLog  `json:"pomodoros"`
+	Habits        []Habit        `json:"habits"`
 	Counters      Counters       `json:"counters"`
 	Settings      Settings       `json:"settings"`
 }
@@ -80,8 +92,9 @@ type Data struct {
 // Counters keep the next id for each kind.  We never reuse an id
 // even after deletion so external references stay valid.
 type Counters struct {
-	NextNoteID int `json:"next_note_id"`
-	NextTaskID int `json:"next_task_id"`
+	NextNoteID  int `json:"next_note_id"`
+	NextTaskID  int `json:"next_task_id"`
+	NextHabitID int `json:"next_habit_id"`
 }
 
 // Settings is for user preferences.
@@ -148,7 +161,8 @@ func defaultData() *Data {
 		Tasks:         []Task{},
 		Journal:       []JournalEntry{},
 		Pomodoros:     []PomodoroLog{},
-		Counters:      Counters{NextNoteID: 1, NextTaskID: 1},
+		Habits:        []Habit{},
+		Counters:      Counters{NextNoteID: 1, NextTaskID: 1, NextHabitID: 1},
 		Settings: Settings{
 			PomodoroMinutes:    25,
 			ShortBreakMinutes:  5,
@@ -213,6 +227,18 @@ func migrate(d *Data) error {
 		for _, t := range d.Tasks {
 			if t.ID >= d.Counters.NextTaskID {
 				d.Counters.NextTaskID = t.ID + 1
+			}
+		}
+	}
+	// v2 -> v3: habits collection was added.
+	if d.Habits == nil {
+		d.Habits = []Habit{}
+	}
+	if d.Counters.NextHabitID == 0 {
+		d.Counters.NextHabitID = 1
+		for _, h := range d.Habits {
+			if h.ID >= d.Counters.NextHabitID {
+				d.Counters.NextHabitID = h.ID + 1
 			}
 		}
 	}

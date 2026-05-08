@@ -78,6 +78,14 @@ func Run(args []string) error {
 		return runCalendar(rest)
 	case "edit-data":
 		return runEditDataFile()
+	case "habit", "habits", "h":
+		return runHabit(rest)
+	case "import":
+		return runImport(rest)
+	case "vault":
+		return runVault(rest)
+	case "motd":
+		return runMotd(os.Stdout)
 	}
 	return fmt.Errorf("unknown command %q — try `mindforge help`", cmd)
 }
