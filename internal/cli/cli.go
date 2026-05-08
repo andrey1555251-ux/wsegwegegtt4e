@@ -496,8 +496,59 @@ func runTask(args []string) error {
 		return runTaskPri(rest)
 	case "due":
 		return runTaskDue(rest)
+	case "matrix", "eisenhower":
+		return runTaskMatrix(rest)
 	}
 	return fmt.Errorf("unknown task subcommand %q", cmd)
+}
+
+// runTaskMatrix renders open tasks in the four Eisenhower quadrants:
+// urgent + important, important not urgent, urgent not important, neither.
+// "Urgent" = due within 48h or overdue.  "Important" = priority 1 or 2.
+func runTaskMatrix(_ []string) error {
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	open := tasks.List(st, tasks.FilterOpts{})
+	now := time.Now()
+	var ui1, ui2, ui3, ui4 []store.Task
+	for _, t := range open {
+		urgent := t.Due != nil && t.Due.Sub(now) <= 48*time.Hour
+		important := t.Priority <= 2
+		switch {
+		case urgent && important:
+			ui1 = append(ui1, t)
+		case !urgent && important:
+			ui2 = append(ui2, t)
+		case urgent && !important:
+			ui3 = append(ui3, t)
+		default:
+			ui4 = append(ui4, t)
+		}
+	}
+	render := func(title string, color func(string) string, ts []store.Task) {
+		fmt.Println(color(ui.Bold(title)))
+		if len(ts) == 0 {
+			fmt.Println("  " + ui.Dim("—"))
+			return
+		}
+		for _, t := range ts {
+			due := ""
+			if t.Due != nil {
+				due = " " + ui.Dim("("+formatDueShort(*t.Due, now)+")")
+			}
+			fmt.Printf("  P%d #%d %s%s\n", t.Priority, t.ID, truncate(t.Title, 60), due)
+		}
+	}
+	render("DO  — urgent & important", ui.Red, ui1)
+	fmt.Println()
+	render("PLAN — important, not urgent", ui.Yellow, ui2)
+	fmt.Println()
+	render("DELEGATE — urgent, not important", ui.Cyan, ui3)
+	fmt.Println()
+	render("DROP  — neither", ui.Dim, ui4)
+	return nil
 }
 
 // runTaskPri sets the priority of one task in a single command.
@@ -703,6 +754,8 @@ func runTaskList(args []string) error {
 	q := fs.String("query", "", "substring search")
 	overdue := fs.Bool("overdue", false, "overdue only")
 	soon := fs.Int("soon", 0, "due within N hours")
+	since := fs.Int("since", 0, "with --done: only completed within last N days")
+	pri := fs.Int("pri", 0, "only priority <= this")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -710,15 +763,21 @@ func runTaskList(args []string) error {
 	if err != nil {
 		return err
 	}
+	doneSinceHrs := 0
+	if *since > 0 {
+		doneSinceHrs = *since * 24
+	}
 	out := tasks.List(st, tasks.FilterOpts{
-		IncludeDone:     *all,
-		OnlyDone:        *done,
+		IncludeDone:     *all || *done || doneSinceHrs > 0,
+		OnlyDone:        *done || doneSinceHrs > 0,
 		IncludeArchived: *withArchived || *archived,
 		OnlyArchived:    *archived,
 		Tag:             *tag,
 		Query:           *q,
 		OverdueOnly:     *overdue,
 		DueSoonHrs:      *soon,
+		DoneSinceHrs:    doneSinceHrs,
+		MinPriority:     *pri,
 	})
 	if len(out) == 0 {
 		fmt.Println(ui.Dim("(no tasks)"))

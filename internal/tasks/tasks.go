@@ -272,7 +272,9 @@ type FilterOpts struct {
 	Tag             string
 	Query           string
 	OverdueOnly     bool
-	DueSoonHrs      int // 0 = ignore
+	DueSoonHrs      int   // 0 = ignore
+	DoneSinceHrs    int   // 0 = ignore (only applies when filtering done tasks)
+	MinPriority     int   // 0 = ignore — keeps tasks with priority <= this value
 }
 
 // List returns tasks matching opts, sorted by smart key.
@@ -318,6 +320,21 @@ func List(s *store.Store, opts FilterOpts) []store.Task {
 				if diff < 0 || diff > time.Duration(opts.DueSoonHrs)*time.Hour {
 					continue
 				}
+			}
+			if opts.DoneSinceHrs > 0 {
+				if !t.Done {
+					continue
+				}
+				ts := t.CreatedAt
+				if t.DoneAt != nil {
+					ts = *t.DoneAt
+				}
+				if now.Sub(ts) > time.Duration(opts.DoneSinceHrs)*time.Hour {
+					continue
+				}
+			}
+			if opts.MinPriority > 0 && t.Priority > opts.MinPriority {
+				continue
 			}
 			out = append(out, t)
 		}
