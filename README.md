@@ -9,15 +9,15 @@ is a self-contained Windows `.exe` with no DLLs to chase.
 It keeps these things in a single JSON file:
 
 - **Notes** — quick markdown snippets with tags and pinning.
-- **Tasks** — a TODO list with priorities, due dates and tags.
-- **Journal** — append-only daily reflections with a 1‑5 mood.
+- **Tasks** — TODO items with priorities, due dates, tags, recurrence, archiving.
+- **Journal** — append-only daily reflections with a 1‑5 mood and a histogram view.
 - **Pomodoros** — a focus timer that records every completed round.
 - **Habits** — daily check-ins with streaks and a heatmap.
 - **Vault** — AES-256-GCM encrypted notes behind a passphrase.
 
-…and turns those into a daily briefing, a tiny ASCII calendar, a
-heatmap of focus time, full-text search, and Markdown / CSV / JSON
-import & export.
+…and turns those into a daily briefing, a tiny ASCII calendar, an
+agenda timeline, a markdown weekly review, full-text search, and
+Markdown / CSV / JSON import & export.
 
 ## Quick start
 
@@ -26,17 +26,27 @@ mindforge welcome                    # banner + cheat sheet
 mindforge add buy milk #home         # quick capture (creates a task)
 mindforge add @ Idea: rewrite intro  # quick capture (creates a note)
 mindforge task add "ship release" --priority 1 --due tomorrow --tag work
+mindforge task next                  # one-line "what should I do now?" pointer
+mindforge task pri 1 2               # change priority
+mindforge task due 1 friday          # change due date (or 'none' to clear)
+mindforge task repeat 1 weekly       # daily | weekly | monthly | none
 mindforge note add -t "first note" -b "this is the body" --tag ideas
 mindforge journal write -b "today I shipped MindForge"
+mindforge journal mood 4             # 1..5
+mindforge journal trend --days 30    # mood histogram
 mindforge habit add "drink water"    # track a daily intention
 mindforge habit check 1              # tick today's habit
 mindforge pomodoro --label "deep work" --rounds 4
 mindforge today                      # daily briefing
 mindforge motd                       # one-liner banner for shell rc
-mindforge stats                      # streak, heatmap, totals
+mindforge agenda --days 7            # upcoming tasks grouped by day
+mindforge summary --week             # markdown weekly review (paste-friendly)
+mindforge stats                      # streak, heatmap, totals, focus by label
 mindforge search "release"           # search across notes, tasks, journal
 mindforge vault encrypt 1            # AES-GCM encrypt a sensitive note
+mindforge import notes.md --kind notes
 mindforge export --format md --out backup.md
+mindforge doctor --fix               # self-check + auto-repair
 ```
 
 Run `mindforge help` for the full menu.
@@ -82,6 +92,9 @@ Top open tasks
   P3 #4 fix sidebar width
   P3 #2 write blog post
 
+Pending habits
+  ○ #1 drink water  · 7 day streak
+
 Journal — empty for today.  Try `mindforge journal write -b "..."`.
 
 25m focus today · 1 pomodoros today · 7 (on fire)
@@ -104,6 +117,53 @@ Last 7 weeks of pomodoros
   Mon ░ ▒ ▓ █ ▓ ▒ ░
   Tue ░ ▒ ▒ ▓ ▒ ░ ░
   ...
+
+Top tags
+  #work             12 item(s)
+  #home              4 item(s)
+
+Focus by label · last 30 days
+  deep work               1h 25m · 4 rounds
+  reading                   25m  · 1 rounds
+```
+
+```text
+$ mindforge agenda
+
+Agenda — next 7 days
+────────────────────
+OVERDUE
+  P2  #7  reply to Anna  yesterday
+
+Fri · 2026-05-08  (today)
+  P1  #1  ship release  today  #work
+
+Mon · 2026-05-11
+  P3  #4  fix sidebar width  3d
+```
+
+```text
+$ mindforge summary --week
+
+# MindForge summary — last 7 days
+_Fri 01 May → Fri 08 May 2026_
+
+## ✓ Completed (3)
+- [x] **P1** ship release  _#work_
+- [x] **P3** fix sidebar width
+- [x] **P3** write blog post
+
+## ⏳ Open (4) · overdue (1)
+- [ ] **P2** reply to Anna — _due 2026-05-07_
+
+## 🍅 Focus
+- 9 pomodoros · 3h 45m
+  - **deep work** — 2h 30m
+  - **reading** — 1h 15m
+
+## 📓 Journal
+- 5 days written
+- avg mood: 3.80 / 5 _(across 5 entries)_
 ```
 
 ## Why?
