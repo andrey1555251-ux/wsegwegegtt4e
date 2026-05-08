@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - run: go vet ./...
+      - run: go test ./...
+
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: cross-compile to windows/amd64
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build \
+            -ldflags "-s -w -X github.com/andrey1555251-ux/mindforge/internal/version.Version=ci" \
+            -o dist/mindforge.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mindforge-exe
+          path: dist/mindforge.exe

@@ -1,0 +1,12 @@
+# Build artefacts
+/dist/
+mindforge
+mindforge.exe
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+
+# Local data file (if anyone runs `mindforge` from a checkout)
+data.json
