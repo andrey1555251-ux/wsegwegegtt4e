@@ -96,6 +96,8 @@ func Run(args []string) error {
 		return runVault(rest)
 	case "motd":
 		return runMotd(os.Stdout)
+	case "completion":
+		return runCompletion(rest)
 	}
 	return fmt.Errorf("unknown command %q — try `mindforge help`", cmd)
 }
@@ -208,6 +210,7 @@ func runHelp(w io.Writer) error {
 			{"undo", "restore from the most recent backup"},
 			{"tags rename <from> <to>", "rename a tag everywhere"},
 			{"tags delete <tag>", "remove a tag everywhere"},
+			{"completion <shell>", "print bash/zsh/fish completion script"},
 			{"export", "dump everything (--format json|md|csv)"},
 			{"import", "import text/csv/json into notes or tasks"},
 			{"config", "view or change settings (--get|--set k=v)"},
