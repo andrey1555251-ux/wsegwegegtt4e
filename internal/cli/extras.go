@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -168,6 +169,112 @@ func runCalendar(args []string) error {
 	fmt.Println()
 	fmt.Println(ui.Dim("legend: ! task due  · * pomodoros  · j journal entry"))
 	return nil
+}
+
+// runAgenda prints tasks grouped by due date over the next N days,
+// followed by a "later" bucket for due dates further out.
+func runAgenda(args []string) error {
+	days := 7
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--days", "-d":
+			if i+1 >= len(args) {
+				return errors.New("--days needs a value")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return err
+			}
+			days = n
+			i++
+		}
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	open := tasks.List(st, tasks.FilterOpts{})
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	cutoff := today.AddDate(0, 0, days)
+
+	overdue := []store.Task{}
+	bucket := map[string][]store.Task{}
+	noDue := []store.Task{}
+	later := []store.Task{}
+	for _, t := range open {
+		if t.Due == nil {
+			noDue = append(noDue, t)
+			continue
+		}
+		due := t.Due.In(now.Location())
+		dueDay := time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, now.Location())
+		switch {
+		case dueDay.Before(today):
+			overdue = append(overdue, t)
+		case !dueDay.Before(cutoff):
+			later = append(later, t)
+		default:
+			key := dueDay.Format("2006-01-02")
+			bucket[key] = append(bucket[key], t)
+		}
+	}
+
+	ui.PrintHeader(os.Stdout, fmt.Sprintf("Agenda — next %d days", days))
+	if len(overdue) > 0 {
+		fmt.Println(ui.Red("OVERDUE"))
+		for _, t := range overdue {
+			printAgendaTask(t, now)
+		}
+		fmt.Println()
+	}
+	any := false
+	for i := 0; i < days; i++ {
+		day := today.AddDate(0, 0, i)
+		key := day.Format("2006-01-02")
+		ts := bucket[key]
+		if len(ts) == 0 {
+			continue
+		}
+		any = true
+		header := day.Format("Mon · 2006-01-02")
+		if i == 0 {
+			header += "  " + ui.Dim("(today)")
+		} else if i == 1 {
+			header += "  " + ui.Dim("(tomorrow)")
+		}
+		fmt.Println(ui.Bold(header))
+		for _, t := range ts {
+			printAgendaTask(t, now)
+		}
+		fmt.Println()
+	}
+	if !any && len(overdue) == 0 {
+		fmt.Println(ui.Dim("nothing scheduled in this window."))
+	}
+	if len(later) > 0 {
+		fmt.Println(ui.Bold("Later"))
+		for _, t := range later {
+			printAgendaTask(t, now)
+		}
+		fmt.Println()
+	}
+	if len(noDue) > 0 {
+		fmt.Println(ui.Dim(fmt.Sprintf("(%d open tasks have no due date)", len(noDue))))
+	}
+	return nil
+}
+
+func printAgendaTask(t store.Task, now time.Time) {
+	pri := ui.Cyan(fmt.Sprintf("P%d", t.Priority))
+	tail := ""
+	if t.Due != nil {
+		tail = " " + ui.Dim(formatDueShort(*t.Due, now))
+	}
+	if len(t.Tags) > 0 {
+		tail += " " + renderTags(t.Tags)
+	}
+	fmt.Printf("  %s  #%d  %s%s\n", pri, t.ID, t.Title, tail)
 }
 
 // runEditDataFile opens the JSON data file in the user's preferred

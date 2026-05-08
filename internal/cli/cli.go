@@ -77,6 +77,8 @@ func Run(args []string) error {
 		return runQuickCapture(rest)
 	case "calendar", "cal":
 		return runCalendar(rest)
+	case "agenda":
+		return runAgenda(rest)
 	case "edit-data":
 		return runEditDataFile()
 	case "habit", "habits", "h":
