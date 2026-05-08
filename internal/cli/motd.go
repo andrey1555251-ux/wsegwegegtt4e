@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	"github.com/andrey1555251-ux/mindforge/internal/habits"
@@ -67,8 +66,3 @@ func timeOfDayGreeting(now time.Time) string {
 		return "good night"
 	}
 }
-
-// Sort here is unused but the import for `sort` keeps the package tidy
-// against future extensions like top-N pinned notes.  We keep it only
-// if needed by future code; otherwise the build will warn.
-var _ = sort.Strings
