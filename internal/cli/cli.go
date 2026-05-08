@@ -146,6 +146,7 @@ func runHelp(w io.Writer) error {
 			{"task add", "add a task (\"title\" --priority 1 --due 2026-12-31 --tag work)"},
 			{"task list", "list open tasks (--all --done --archived --overdue --soon 24)"},
 			{"task done <id>", "mark done; recurring tasks regenerate"},
+			{"task next", "show the single highest-priority open task"},
 			{"task reopen <id>", "reopen a previously completed task"},
 			{"task edit <id>", "edit a task"},
 			{"task archive <id>", "soft-delete (kept in --archived view)"},
@@ -468,8 +469,35 @@ func runTask(args []string) error {
 		return runTaskTidy()
 	case "repeat":
 		return runTaskRepeat(rest)
+	case "next":
+		return runTaskNext()
 	}
 	return fmt.Errorf("unknown task subcommand %q", cmd)
+}
+
+// runTaskNext prints just the one highest-priority open task — useful as
+// a focus hint or to wire into a status bar.
+func runTaskNext() error {
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	out := tasks.List(st, tasks.FilterOpts{})
+	if len(out) == 0 {
+		fmt.Println(ui.Dim("inbox zero — nothing pending."))
+		return nil
+	}
+	t := out[0]
+	due := ""
+	if t.Due != nil {
+		due = " · " + formatDueShort(*t.Due, time.Now())
+	}
+	fmt.Printf("%s %s %s%s\n",
+		ui.Bold("→"),
+		ui.Cyan("P"+itoa(t.Priority)),
+		t.Title,
+		ui.Dim(due))
+	return nil
 }
 
 func runTaskArchive(args []string, archive bool) error {
