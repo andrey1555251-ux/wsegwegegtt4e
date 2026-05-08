@@ -277,6 +277,164 @@ func printAgendaTask(t store.Task, now time.Time) {
 	fmt.Printf("  %s  #%d  %s%s\n", pri, t.ID, t.Title, tail)
 }
 
+// runSummary prints a markdown-friendly recap covering the last N
+// days.  Designed to be pasteable into a status update or weekly
+// review.  It deliberately uses no ANSI colours so it survives a copy.
+func runSummary(args []string) error {
+	days := 7
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--days", "-d":
+			if i+1 >= len(args) {
+				return errors.New("--days needs a value")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n <= 0 {
+				return fmt.Errorf("invalid --days %q", args[i+1])
+			}
+			days = n
+			i++
+		case "--week":
+			days = 7
+		case "--month":
+			days = 30
+		}
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	d, err := st.Snapshot()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	since := now.AddDate(0, 0, -days)
+
+	w := os.Stdout
+	fmt.Fprintf(w, "# MindForge summary — last %d days\n", days)
+	fmt.Fprintf(w, "_%s → %s_\n\n", since.Format("Mon 02 Jan"), now.Format("Mon 02 Jan 2006"))
+
+	// Tasks completed in the window.
+	var completed []store.Task
+	for _, t := range d.Tasks {
+		if t.Done && t.DoneAt != nil && t.DoneAt.After(since) {
+			completed = append(completed, t)
+		}
+	}
+	fmt.Fprintf(w, "## ✓ Completed (%d)\n", len(completed))
+	if len(completed) == 0 {
+		fmt.Fprintln(w, "_no tasks closed in this window_")
+	} else {
+		for _, t := range completed {
+			fmt.Fprintf(w, "- [x] **P%d** %s", t.Priority, t.Title)
+			if len(t.Tags) > 0 {
+				fmt.Fprintf(w, "  _#%s_", strings.Join(t.Tags, " #"))
+			}
+			fmt.Fprintln(w)
+		}
+	}
+
+	// Open and overdue.
+	var overdue []store.Task
+	openCount := 0
+	for _, t := range d.Tasks {
+		if t.Done || t.Archived {
+			continue
+		}
+		openCount++
+		if t.Due != nil && t.Due.Before(now) {
+			overdue = append(overdue, t)
+		}
+	}
+	fmt.Fprintf(w, "\n## ⏳ Open (%d) · overdue (%d)\n", openCount, len(overdue))
+	for _, t := range overdue {
+		fmt.Fprintf(w, "- [ ] **P%d** %s — _due %s_\n", t.Priority, t.Title, t.Due.Format("2006-01-02"))
+	}
+
+	// Pomodoros + focus.
+	pomCount := 0
+	focusMin := 0
+	byLabel := map[string]int{}
+	for _, p := range d.Pomodoros {
+		if p.Interrupted || !p.StartedAt.After(since) {
+			continue
+		}
+		pomCount++
+		focusMin += p.Minutes
+		k := p.Label
+		if k == "" {
+			k = "(unlabeled)"
+		}
+		byLabel[k] += p.Minutes
+	}
+	fmt.Fprintf(w, "\n## 🍅 Focus\n")
+	fmt.Fprintf(w, "- %d pomodoros · %s\n", pomCount, formatMinutes(focusMin))
+	if len(byLabel) > 0 {
+		type kv struct {
+			k string
+			v int
+		}
+		var rows []kv
+		for k, v := range byLabel {
+			rows = append(rows, kv{k, v})
+		}
+		// simple insertion sort by minutes desc
+		for i := 1; i < len(rows); i++ {
+			for j := i; j > 0 && rows[j].v > rows[j-1].v; j-- {
+				rows[j], rows[j-1] = rows[j-1], rows[j]
+			}
+		}
+		for _, r := range rows {
+			fmt.Fprintf(w, "  - **%s** — %s\n", r.k, formatMinutes(r.v))
+		}
+	}
+
+	// Journal entries + average mood.
+	jc := 0
+	moodSum, moodN := 0, 0
+	cutoff := since.Format("2006-01-02")
+	for _, e := range d.Journal {
+		if e.Date < cutoff {
+			continue
+		}
+		jc++
+		if e.Mood >= 1 && e.Mood <= 5 {
+			moodSum += e.Mood
+			moodN++
+		}
+	}
+	fmt.Fprintf(w, "\n## 📓 Journal\n")
+	fmt.Fprintf(w, "- %d days written\n", jc)
+	if moodN > 0 {
+		fmt.Fprintf(w, "- avg mood: %.2f / 5 _(across %d entries)_\n", float64(moodSum)/float64(moodN), moodN)
+	}
+
+	// Habits — checks in window.
+	if len(d.Habits) > 0 {
+		fmt.Fprintf(w, "\n## 🌱 Habits\n")
+		for _, h := range d.Habits {
+			c := 0
+			for _, day := range h.Checks {
+				if day >= cutoff {
+					c++
+				}
+			}
+			fmt.Fprintf(w, "- **%s** — %d / %d days\n", h.Name, c, days)
+		}
+	}
+
+	// New notes in window.
+	nn := 0
+	for _, n := range d.Notes {
+		if n.CreatedAt.After(since) {
+			nn++
+		}
+	}
+	fmt.Fprintf(w, "\n## 🗒  Notes\n- %d new note(s) in this window\n", nn)
+	return nil
+}
+
 // runEditDataFile opens the JSON data file in the user's preferred
 // editor.  This is a power-user escape hatch for fixing weird state.
 func runEditDataFile() error {

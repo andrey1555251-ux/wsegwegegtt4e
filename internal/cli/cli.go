@@ -79,6 +79,8 @@ func Run(args []string) error {
 		return runCalendar(rest)
 	case "agenda":
 		return runAgenda(rest)
+	case "summary", "review":
+		return runSummary(rest)
 	case "edit-data":
 		return runEditDataFile()
 	case "habit", "habits", "h":
@@ -151,6 +153,8 @@ func runHelp(w io.Writer) error {
 			{"task next", "show the single highest-priority open task"},
 			{"task reopen <id>", "reopen a previously completed task"},
 			{"task edit <id>", "edit a task"},
+			{"task pri <id> N", "change priority (1..5)"},
+			{"task due <id> when", "change due date (date | today | clear)"},
 			{"task archive <id>", "soft-delete (kept in --archived view)"},
 			{"task tidy", "archive every completed task at once"},
 			{"task repeat <id> daily", "set recurrence (daily|weekly|monthly|none)"},
@@ -185,6 +189,8 @@ func runHelp(w io.Writer) error {
 			{"motd", "tiny one-liner banner for shell rc"},
 			{"stats", "totals, streaks and a tiny heatmap"},
 			{"calendar", "ASCII month view"},
+			{"agenda", "next 7 days of due tasks (--days N)"},
+			{"summary", "markdown weekly review (--week|--month|--days N)"},
 			{"search <q>", "unified search across notes/tasks/journal"},
 			{"add", "quick capture (\"text\", '@ note', '! priority task')"},
 			{"tags", "show every tag with usage counts"},
