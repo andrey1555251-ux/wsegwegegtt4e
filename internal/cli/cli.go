@@ -1256,6 +1256,17 @@ func runToday(w io.Writer) error {
 }
 
 func runTags(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "rename", "rn", "mv":
+			return runTagRename(args[1:])
+		case "delete", "del", "rm":
+			if len(args) != 2 {
+				return errors.New("usage: mindforge tags delete <tag>")
+			}
+			return runTagRename([]string{args[1]})
+		}
+	}
 	st, err := open()
 	if err != nil {
 		return err
@@ -1289,6 +1300,71 @@ func runTags(args []string) error {
 		rows = append(rows, []string{"#" + k, itoa(cnt[k])})
 	}
 	ui.PrintTable(os.Stdout, []string{"tag", "count"}, rows)
+	return nil
+}
+
+// runTagRename replaces every occurrence of `from` with `to` across
+// notes and tasks.  If `to` already exists on the same item the old
+// tag is removed (no duplicates).  Empty `to` deletes the tag entirely.
+func runTagRename(args []string) error {
+	if len(args) < 1 || len(args) > 2 {
+		return errors.New("usage: mindforge tag rename <from> [<to>]   (omit <to> to delete)")
+	}
+	from := strings.TrimPrefix(strings.TrimSpace(args[0]), "#")
+	to := ""
+	if len(args) == 2 {
+		to = strings.TrimPrefix(strings.TrimSpace(args[1]), "#")
+	}
+	if from == "" {
+		return errors.New("source tag is empty")
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	changed := 0
+	err = st.Use(func(d *store.Data) error {
+		rewrite := func(in []string) []string {
+			out := in[:0]
+			seen := map[string]bool{}
+			hadOld := false
+			for _, t := range in {
+				if t == from {
+					hadOld = true
+					continue
+				}
+				if !seen[t] {
+					out = append(out, t)
+					seen[t] = true
+				}
+			}
+			if hadOld && to != "" && !seen[to] {
+				out = append(out, to)
+			}
+			if hadOld {
+				changed++
+			}
+			return out
+		}
+		for i := range d.Notes {
+			d.Notes[i].Tags = rewrite(d.Notes[i].Tags)
+		}
+		for i := range d.Tasks {
+			d.Tasks[i].Tags = rewrite(d.Tasks[i].Tags)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	switch {
+	case to == "":
+		fmt.Printf("%s removed #%s from %d item(s)\n", ui.Green("ok"), from, changed)
+	case changed == 0:
+		fmt.Println(ui.Dim("no items had #" + from))
+	default:
+		fmt.Printf("%s renamed #%s → #%s on %d item(s)\n", ui.Green("ok"), from, to, changed)
+	}
 	return nil
 }
 
