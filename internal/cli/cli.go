@@ -6,6 +6,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -61,6 +62,8 @@ func Run(args []string) error {
 		return runWhere(rest)
 	case "backup":
 		return runBackup(rest)
+	case "restore":
+		return runRestore(rest)
 	case "export":
 		return runExport(rest)
 	case "config":
@@ -199,6 +202,7 @@ func runHelp(w io.Writer) error {
 		{"Maintenance", [][2]string{
 			{"where", "print where your data lives"},
 			{"backup", "make a timestamped backup"},
+			{"restore <file>", "load a backup, saving current state first"},
 			{"export", "dump everything (--format json|md|csv)"},
 			{"import", "import text/csv/json into notes or tasks"},
 			{"config", "view or change settings (--get|--set k=v)"},
@@ -1307,6 +1311,43 @@ func runBackup(args []string) error {
 		return err
 	}
 	fmt.Println(ui.Green("backup:"), dst)
+	return nil
+}
+
+// runRestore replaces the live data file with the contents of a
+// backup.  As a safety net we always create a fresh `pre-restore`
+// backup of the current state before swapping it in.
+func runRestore(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: mindforge restore <backup-file>")
+	}
+	src := args[0]
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read backup: %w", err)
+	}
+	// Sanity-check that it parses as a Data document.
+	var probe store.Data
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return fmt.Errorf("backup is not a valid mindforge data file: %w", err)
+	}
+	st, err := open()
+	if err != nil {
+		return err
+	}
+	pre, err := st.Backup()
+	if err != nil {
+		return fmt.Errorf("safety backup: %w", err)
+	}
+	if err := os.WriteFile(st.Path(), raw, 0o644); err != nil {
+		return err
+	}
+	// Reopen to validate + migrate if schema is older.
+	if _, err := store.Open(st.Path()); err != nil {
+		return fmt.Errorf("restored file is unreadable: %w", err)
+	}
+	fmt.Println(ui.Green("restored:"), src)
+	fmt.Println(ui.Dim("previous state saved to:"), pre)
 	return nil
 }
 
