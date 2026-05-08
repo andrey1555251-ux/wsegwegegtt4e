@@ -976,6 +976,18 @@ func runStats(args []string) error {
 		for _, t := range tt {
 			fmt.Printf("  %s  %s\n", ui.Pad("#"+t.Tag, 16), ui.Dim(itoa(t.Count)+" item(s)"))
 		}
+		fmt.Println()
+	}
+	since := now.AddDate(0, 0, -30)
+	fl := stats.FocusByLabel(d, since, 5)
+	if len(fl) > 0 {
+		fmt.Println(ui.Bold("Focus by label"), ui.Dim("· last 30 days"))
+		for _, r := range fl {
+			fmt.Printf("  %s  %s · %s\n",
+				ui.Pad(truncate(r.Label, 20), 22),
+				ui.Bold(formatMinutes(r.Minutes)),
+				ui.Dim(itoa(r.Rounds)+" rounds"))
+		}
 	}
 	return nil
 }

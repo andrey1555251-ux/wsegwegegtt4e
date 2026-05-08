@@ -91,6 +91,49 @@ func startOfWeek(t time.Time) time.Time {
 	return d.AddDate(0, 0, -(weekday - 1))
 }
 
+// FocusByLabel groups completed pomodoros by their label and totals
+// the focus minutes spent on each.  An empty label is shown as
+// "(unlabeled)".  Sorted by minutes descending.
+func FocusByLabel(d *store.Data, since time.Time, n int) []FocusRow {
+	totals := map[string]int{}
+	rounds := map[string]int{}
+	for _, p := range d.Pomodoros {
+		if p.Interrupted {
+			continue
+		}
+		if !p.StartedAt.After(since) && !since.IsZero() {
+			continue
+		}
+		key := p.Label
+		if key == "" {
+			key = "(unlabeled)"
+		}
+		totals[key] += p.Minutes
+		rounds[key]++
+	}
+	out := make([]FocusRow, 0, len(totals))
+	for k, v := range totals {
+		out = append(out, FocusRow{Label: k, Minutes: v, Rounds: rounds[k]})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Minutes != out[j].Minutes {
+			return out[i].Minutes > out[j].Minutes
+		}
+		return out[i].Label < out[j].Label
+	})
+	if n > 0 && len(out) > n {
+		out = out[:n]
+	}
+	return out
+}
+
+// FocusRow is one row of FocusByLabel.
+type FocusRow struct {
+	Label   string
+	Minutes int
+	Rounds  int
+}
+
 // TopTags returns the most common tags across notes and tasks.
 func TopTags(d *store.Data, n int) []TagCount {
 	counts := map[string]int{}

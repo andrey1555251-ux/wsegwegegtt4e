@@ -4,4 +4,4 @@ package version
 
 // Version is overridden via -ldflags "-X .../version.Version=..." at
 // release time.  The default is the development tag.
-var Version = "0.1.0-dev"
+var Version = "0.3.0"
