@@ -41,10 +41,36 @@ func runMotd(w io.Writer) error {
 		ui.Red(itoa(len(open))),
 		ui.Yellow(itoa(len(soon))),
 		ui.Yellow(itoa(pendingHabits)))
-	fmt.Fprintf(w, "%s focus today · %s pomodoros · %s journal streak\n",
+	// Best habit streak across all habits.
+	bestHabit := ""
+	bestStreak := 0
+	for _, h := range hs {
+		sk := habits.Streak(h, now)
+		if sk > bestStreak {
+			bestStreak = sk
+			bestHabit = h.Name
+		}
+	}
+	line2 := fmt.Sprintf("%s focus today · %s pomodoros · %s journal streak",
 		ui.Bold(formatMinutes(s.FocusMinutesToday)),
 		ui.Bold(itoa(s.PomodorosToday)),
 		streakBadge(s.JournalStreak))
+	if bestStreak > 0 {
+		line2 += fmt.Sprintf(" · %s %s", streakBadge(bestStreak), ui.Dim(bestHabit))
+	}
+	fmt.Fprintln(w, line2)
+
+	// Show next focus task if available.
+	allOpen := tasks.List(st, tasks.FilterOpts{})
+	if len(allOpen) > 0 {
+		t := allOpen[0]
+		tag := ""
+		if len(t.Tags) > 0 {
+			tag = " " + renderTags(t.Tags)
+		}
+		fmt.Fprintf(w, "%s %s%s\n", ui.Dim("next →"), ui.Bold(t.Title), tag)
+	}
+
 	if !d.Settings.DisableMotivation {
 		fmt.Fprintln(w, ui.Italic(ui.Magenta(randomQuote())))
 	}
