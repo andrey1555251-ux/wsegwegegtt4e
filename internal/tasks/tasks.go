@@ -281,6 +281,12 @@ type FilterOpts struct {
 func List(s *store.Store, opts FilterOpts) []store.Task {
 	q := strings.ToLower(strings.TrimSpace(opts.Query))
 	tag := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(opts.Tag, "#")))
+	// DoneSinceHrs implies "show me done tasks", so callers can pass
+	// DoneSinceHrs alone without juggling IncludeDone/OnlyDone too.
+	if opts.DoneSinceHrs > 0 {
+		opts.IncludeDone = true
+		opts.OnlyDone = true
+	}
 
 	var out []store.Task
 	now := time.Now()

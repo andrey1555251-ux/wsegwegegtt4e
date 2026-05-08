@@ -118,6 +118,46 @@ func TestTaskListFilters(t *testing.T) {
 	}
 }
 
+func TestTaskListDoneSinceAndMinPriority(t *testing.T) {
+	s := newStore(t)
+	// open low-priority task
+	_, _ = Add(s, "low", 5, nil, nil, "")
+	// done long ago
+	old, _ := Add(s, "old", 2, nil, nil, "")
+	if _, err := Done(s, old); err != nil {
+		t.Fatalf("done old: %v", err)
+	}
+	// rewind DoneAt by 60 days
+	long := time.Now().Add(-60 * 24 * time.Hour)
+	_ = s.Use(func(d *store.Data) error {
+		for i := range d.Tasks {
+			if d.Tasks[i].ID == old {
+				d.Tasks[i].DoneAt = &long
+			}
+		}
+		return nil
+	})
+	// done recently
+	recent, _ := Add(s, "recent", 1, nil, nil, "")
+	if _, err := Done(s, recent); err != nil {
+		t.Fatalf("done recent: %v", err)
+	}
+
+	out := List(s, FilterOpts{DoneSinceHrs: 24 * 7})
+	if len(out) != 1 || out[0].ID != recent {
+		t.Fatalf("DoneSinceHrs failed, got %+v", out)
+	}
+
+	out = List(s, FilterOpts{MinPriority: 2})
+	// MinPriority 2 keeps priority<=2, but only OPEN tasks (no done flag set) are returned by default;
+	// we have one open low-pri (5) and others are done -> should be empty.
+	for _, x := range out {
+		if x.Priority > 2 {
+			t.Fatalf("MinPriority leaked %+v", x)
+		}
+	}
+}
+
 func TestTaskUpdate(t *testing.T) {
 	s := newStore(t)
 	id, _ := Add(s, "title", 3, nil, nil, "")
